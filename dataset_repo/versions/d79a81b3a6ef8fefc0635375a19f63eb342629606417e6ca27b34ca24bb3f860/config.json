@@ -1,0 +1,11 @@
+{
+    "delimiter": "|",
+    "drop_header": false,
+    "null_token": "NULL",
+    "remove_rows_with_null_user": true,
+    "remove_rows_with_null_ip": false,
+    "filter_status": null,
+    "filter_event_types": null,
+    "mask_ip_address": false,
+    "convert_timestamp_to_epoch": false
+}
