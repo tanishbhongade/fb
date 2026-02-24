@@ -2,30 +2,49 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from collections import Counter
 import argparse
 from datetime import datetime
-
 
 # ----------------------------
 # Paths
 # ----------------------------
 BASE_DIR = Path("dataset_repo")
-RAW_DIR = BASE_DIR / "raw_data"
-VERSIONS_DIR = BASE_DIR / "versions"
-LOG_FILE = BASE_DIR / "version_log.json"
+OBJECTS_DIR = BASE_DIR / "objects"
+COMMITS_DIR = BASE_DIR / "commits"
+HEAD_FILE = BASE_DIR / "HEAD"
 
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-VERSIONS_DIR.mkdir(parents=True, exist_ok=True)
+OBJECTS_DIR.mkdir(parents=True, exist_ok=True)
+COMMITS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ----------------------------
-# Generate SHA-256 Hash
+# Hash Utilities
 # ----------------------------
-def generate_hash(raw_text, config_dict):
-    config_string = json.dumps(config_dict, sort_keys=True)
-    combined = raw_text + config_string
-    return hashlib.sha256(combined.encode()).hexdigest()
+def hash_content(content: str) -> str:
+    return hashlib.sha256(content.encode()).hexdigest()
+
+
+# ----------------------------
+# Content Addressable Storage
+# ----------------------------
+def store_object(content: str) -> str:
+    object_hash = hash_content(content)
+
+    subdir = OBJECTS_DIR / object_hash[:2]
+    subdir.mkdir(parents=True, exist_ok=True)
+
+    object_path = subdir / object_hash[2:]
+
+    # Deduplication happens here
+    if not object_path.exists():
+        object_path.write_text(content)
+
+    return object_hash
+
+
+def load_object(object_hash: str) -> str:
+    object_path = OBJECTS_DIR / object_hash[:2] / object_hash[2:]
+    return object_path.read_text()
 
 
 # ----------------------------
@@ -47,97 +66,101 @@ def preprocess_text(text, config):
 
 
 # ----------------------------
-# Compute Metrics
+# Commit Handling
 # ----------------------------
-def compute_metrics(text):
-    lines = text.splitlines()
-    tokens = text.split()
+def get_head():
+    if HEAD_FILE.exists():
+        return HEAD_FILE.read_text().strip()
+    return None
 
-    num_lines = len(lines)
-    total_tokens = len(tokens)
-    unique_tokens = len(set(tokens))
-    avg_tokens_per_line = total_tokens / num_lines if num_lines > 0 else 0
 
-    line_counts = Counter(lines)
-    duplicate_lines = sum(count - 1 for count in line_counts.values() if count > 1)
+def update_head(commit_id):
+    HEAD_FILE.write_text(commit_id)
 
-    return {
-        "num_lines": num_lines,
-        "total_tokens": total_tokens,
-        "unique_tokens": unique_tokens,
-        "avg_tokens_per_line": avg_tokens_per_line,
-        "duplicate_lines": duplicate_lines,
+
+def create_commit(object_hash, config, parent):
+    commit_data = {
+        "object_hash": object_hash,
+        "parent": parent,
+        "timestamp": datetime.now().isoformat(),
+        "config": config,
     }
 
+    commit_string = json.dumps(commit_data, sort_keys=True)
+    commit_id = hash_content(commit_string)
+
+    commit_path = COMMITS_DIR / f"{commit_id}.json"
+
+    if not commit_path.exists():
+        commit_path.write_text(json.dumps(commit_data, indent=4))
+
+    return commit_id
+
+
+def load_commit(commit_id):
+    commit_path = COMMITS_DIR / f"{commit_id}.json"
+    return json.loads(commit_path.read_text())
+
 
 # ----------------------------
-# Save Version
+# Create Version (Commit)
 # ----------------------------
 def create_version(raw_file_path, config_file_path):
     raw_text = Path(raw_file_path).read_text()
     config = json.loads(Path(config_file_path).read_text())
 
-    version_id = generate_hash(raw_text, config)
-    version_path = VERSIONS_DIR / version_id
-
-    if version_path.exists():
-        print("Version already exists:", version_id)
-        return
-
-    version_path.mkdir()
-
     processed_text = preprocess_text(raw_text, config)
-    metrics = compute_metrics(processed_text)
 
-    # Save files
-    (version_path / "processed.txt").write_text(processed_text)
-    (version_path / "config.json").write_text(json.dumps(config, indent=4))
-    (version_path / "metrics.json").write_text(json.dumps(metrics, indent=4))
+    object_hash = store_object(processed_text)
 
-    log_version(version_id, config)
+    parent = get_head()
 
-    print("New version created:", version_id)
+    commit_id = create_commit(object_hash, config, parent)
+
+    update_head(commit_id)
+
+    print("New commit created:")
+    print(commit_id)
 
 
 # ----------------------------
-# Logging
+# Log History
 # ----------------------------
-def log_version(version_id, config):
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def show_log():
+    commit_id = get_head()
 
-    log_entry = {
-        "version_id": version_id,
-        "timestamp": timestamp,
-        "config": config,
-    }
-
-    if LOG_FILE.exists():
-        logs = json.loads(LOG_FILE.read_text())
-    else:
-        logs = []
-
-    logs.append(log_entry)
-    LOG_FILE.write_text(json.dumps(logs, indent=4))
-
-
-def show_logs():
-    if not LOG_FILE.exists():
-        print("No version history found.")
+    if not commit_id:
+        print("No commits yet.")
         return
 
-    logs = json.loads(LOG_FILE.read_text())
-    for entry in logs:
-        print("-" * 40)
-        print("Version ID :", entry["version_id"])
-        print("Timestamp  :", entry["timestamp"])
-        print("Config     :", entry["config"])
+    while commit_id:
+        commit = load_commit(commit_id)
+
+        print("-" * 50)
+        print("Commit :", commit_id)
+        print("Time   :", commit["timestamp"])
+        print("Parent :", commit["parent"])
+        print("Config :", commit["config"])
+
+        commit_id = commit["parent"]
+
+
+# ----------------------------
+# Checkout
+# ----------------------------
+def checkout(commit_id, output_file):
+    commit = load_commit(commit_id)
+    content = load_object(commit["object_hash"])
+
+    Path(output_file).write_text(content)
+    print("Checked out to", output_file)
 
 
 # ----------------------------
 # CLI
 # ----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Minimal Dataset Versioning System")
+    parser = argparse.ArgumentParser(description="Minimal Dataset Git-Like System")
     subparsers = parser.add_subparsers(dest="command")
 
     create_parser = subparsers.add_parser("create")
@@ -146,13 +169,20 @@ def main():
 
     subparsers.add_parser("log")
 
+    checkout_parser = subparsers.add_parser("checkout")
+    checkout_parser.add_argument("commit_id")
+    checkout_parser.add_argument("output_file")
+
     args = parser.parse_args()
 
     if args.command == "create":
         create_version(args.raw_file, args.config_file)
 
     elif args.command == "log":
-        show_logs()
+        show_log()
+
+    elif args.command == "checkout":
+        checkout(args.commit_id, args.output_file)
 
     else:
         parser.print_help()

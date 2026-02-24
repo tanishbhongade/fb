@@ -1,0 +1,16 @@
+{
+    "object_hash": "b59d0890b51ff9fd29b4958ddd1dfcaddf9d0834e21cd111d633f74b10094d82",
+    "parent": null,
+    "timestamp": "2026-02-24T13:52:44.620010",
+    "config": {
+        "delimiter": "|",
+        "drop_header": true,
+        "null_token": "NULL",
+        "remove_rows_with_null_user": true,
+        "remove_rows_with_null_ip": false,
+        "filter_status": null,
+        "filter_event_types": null,
+        "mask_ip_address": false,
+        "convert_timestamp_to_epoch": false
+    }
+}
